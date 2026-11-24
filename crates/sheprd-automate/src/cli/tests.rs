@@ -590,6 +590,43 @@ fn symlinked_automations_folder_keeps_a_single_store_row() {
 
 #[cfg(unix)]
 #[test]
+fn shared_automations_folder_keeps_its_first_repository() {
+    use crate::{paths::repository_scripts, scan};
+    use std::os::unix::fs::symlink;
+
+    let fixture = crate::testing::Fixture::new();
+    let paths = &fixture.paths;
+    let repo_a = fixture.root().join("repo-a");
+    let repo_b = fixture.root().join("repo-b");
+    let folder_a = repository_scripts(&repo_a);
+    fs::create_dir_all(&folder_a).unwrap();
+    fs::create_dir_all(repository_scripts(&repo_b).parent().unwrap()).unwrap();
+    symlink(&folder_a, repository_scripts(&repo_b)).unwrap();
+    let script = folder_a.join("nightly.luau");
+    fs::write(
+        &script,
+        "herdr.caps { agents_per_run = 1, tokens_per_day = 100_000, wall_time = \"10m\" }\nherdr.manual(function() notify(\"go\") end)\n",
+    )
+    .unwrap();
+
+    let store = fixture.store();
+    let repo_a = fs::canonicalize(&repo_a).unwrap();
+    let repo_b = fs::canonicalize(&repo_b).unwrap();
+    store.add_repo(&repo_a.to_string_lossy(), 0).unwrap();
+    store.add_repo(&repo_b.to_string_lossy(), 0).unwrap();
+
+    let found = scan::find(paths, &store).unwrap();
+    assert_eq!(
+        found,
+        vec![scan::Found {
+            path: fs::canonicalize(&script).unwrap(),
+            repo: Some(repo_a),
+        }]
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn external_symlinks_and_error_paths_for_script_location() {
     use crate::{
         approve::{self, Mode},

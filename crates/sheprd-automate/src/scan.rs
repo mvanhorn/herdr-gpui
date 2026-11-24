@@ -13,6 +13,7 @@ use sheprd_automation::{
     report::{ScriptCaps, TriggerStatus},
 };
 use std::{
+    collections::HashSet,
     fs,
     path::{Path, PathBuf},
 };
@@ -28,14 +29,20 @@ pub struct Found {
 }
 
 /// Every script in the personal folder and in each registered repository.
+///
+/// A folder that resolves to one already scanned (a repository whose
+/// automations folder links to another's, or to the personal folder) adds
+/// nothing: its scripts keep the first owner, so an approval never runs
+/// against a different repository than the one it was found in.
 pub fn find(paths: &Paths, store: &Store) -> Result<Vec<Found>> {
     let mut found = Vec::new();
-    for path in luau_files(&paths.personal()) {
+    let mut scanned = HashSet::new();
+    for path in luau_files_once(&paths.personal(), &mut scanned) {
         found.push(Found { path, repo: None });
     }
     for repo in store.repos()? {
         let repo = PathBuf::from(repo);
-        for path in luau_files(&repository_scripts(&repo)) {
+        for path in luau_files_once(&repository_scripts(&repo), &mut scanned) {
             found.push(Found {
                 path,
                 repo: Some(repo.clone()),
@@ -44,6 +51,15 @@ pub fn find(paths: &Paths, store: &Store) -> Result<Vec<Found>> {
     }
     found.truncate(MAX_SCRIPTS);
     Ok(found)
+}
+
+fn luau_files_once(dir: &Path, scanned: &mut HashSet<PathBuf>) -> Vec<PathBuf> {
+    if let Ok(resolved) = fs::canonicalize(dir)
+        && !scanned.insert(resolved)
+    {
+        return Vec::new();
+    }
+    luau_files(dir)
 }
 
 fn luau_files(dir: &Path) -> Vec<PathBuf> {
